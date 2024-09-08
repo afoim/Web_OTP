@@ -3,3 +3,7 @@
 
 ## 生成的临时文件
 migration.bin
+
+## 构建的文件
+/build
+app.spec
