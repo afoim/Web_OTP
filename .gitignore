@@ -1,0 +1,5 @@
+## Py虚拟环境目录
+/venv
+
+## 生成的临时文件
+migration.bin

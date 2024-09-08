@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TOTP 导入器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center">
+    <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-xl">
+        <h1 class="text-2xl font-bold mb-4 text-center">TOTP 导入器</h1>
+        
+        <!-- 谷歌验证器开关 -->
+        <label for="googleImport" class="block text-sm font-medium text-gray-700 mb-2">
+            <input type="checkbox" id="googleImport" class="mr-2"> 从谷歌验证器导入
+        </label>
+
+        <!-- OTP输入区域 -->
+        <textarea id="otpUri" placeholder="请输入 OTP URI（每行一个）或谷歌验证器代码" class="w-full p-2 border rounded mb-4" rows="5"></textarea>
+        <button id="importBtn" class="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 mb-4">导入</button>
+        
+        <!-- 已导入OTP展示区域 -->
+        <div id="otpInfo" class="mb-4 hidden">
+            <h2 class="text-xl font-semibold mb-2">已导入的 OTP</h2>
+            <div id="otpList" class="space-y-4"></div>
+            <button id="clearCurrentOtps" class="w-full bg-gray-500 text-white p-2 rounded hover:bg-gray-600">清除当前 OTP</button>
+        </div>
+
+        <!-- 历史记录区域 -->
+        <div id="history" class="mt-6">
+            <h2 class="text-xl font-semibold mb-4">历史记录</h2>
+            <ul id="historyList" class="mb-4"></ul>
+            <button id="clearHistoryBtn" class="w-full bg-red-500 text-white p-2 rounded hover:bg-red-600">清除所有历史记录</button>
+        </div>
+    </div>
+
+    <script>
+        let intervalIds = [];
+
+        // 导入新OTP
+        document.getElementById('importBtn').addEventListener('click', async () => {
+            const googleImport = document.getElementById('googleImport').checked;
+            const uris = document.getElementById('otpUri').value.split('\n').map(uri => uri.trim()).filter(uri => uri);
+            if (uris.length === 0) {
+                alert('请输入至少一个 OTP URI 或谷歌验证器代码');
+                return;
+            }
+
+            const endpoint = googleImport ? '/import_google_auth' : '/import_otp';
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uris })
+            });
+
+            const data = await response.json();
+            if (data.error) {
+                alert(data.error);
+            } else {
+                displayOtps(data);
+                loadHistory(); // 导入后重新加载历史
+            }
+        });
+
+        // 显示OTP信息
+        function displayOtps(otpDataList) {
+            document.getElementById('otpList').innerHTML = '';
+            intervalIds.forEach(clearInterval);
+            intervalIds = [];
+
+            otpDataList.forEach(otp => {
+                const otpElement = document.createElement('div');
+                otpElement.className = 'p-4 border rounded bg-gray-100';
+                otpElement.innerHTML = `
+                    <p class="font-bold">${otp.issuer || ''} ${otp.name || ''}</p>
+                    <p class="text-sm text-gray-600">类型: ${otp.type}, 算法: ${otp.algorithm}, 位数: ${otp.digits}, 时间间隔: ${otp.period}秒</p>
+                    <div id="totp-${otp.secret}" class="text-center mt-4">
+                        <h3 class="text-xl font-semibold mb-2">当前 TOTP 代码</h3>
+                        <p id="totpCode-${otp.secret}" class="text-3xl font-mono"></p>
+                        <p id="countdown-${otp.secret}" class="text-sm text-gray-600 mt-2"></p>
+                    </div>
+                `;
+                document.getElementById('otpList').appendChild(otpElement);
+                document.getElementById('otpInfo').classList.remove('hidden');
+            });
+
+            otpDataList.forEach(otp => {
+                updateTOTP(otp);
+                intervalIds.push(setInterval(() => updateTOTP(otp), 1000));
+            });
+        }
+
+        // 更新TOTP
+        async function updateTOTP(otp) {
+            const response = await fetch('/get_totp', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    secret: otp.secret,
+                    digits: otp.digits,
+                    period: otp.period
+                })
+            });
+
+            const data = await response.json();
+            document.getElementById(`totpCode-${otp.secret}`).textContent = data.code;
+            document.getElementById(`countdown-${otp.secret}`).textContent = `刷新倒计时 ${data.remaining} 秒`;
+        }
+
+        // 清除当前展示的OTP
+        document.getElementById('clearCurrentOtps').addEventListener('click', () => {
+            document.getElementById('otpList').innerHTML = '';
+            intervalIds.forEach(clearInterval);
+            intervalIds = [];
+            document.getElementById('otpInfo').classList.add('hidden');
+        });
+
+        // 加载历史记录
+        async function loadHistory() {
+            const response = await fetch('/get_history');
+            const history = await response.json();
+            const historyList = document.getElementById('historyList');
+            historyList.innerHTML = '';
+
+            history.forEach((record, index) => {
+                const historyItem = document.createElement('li');
+                historyItem.className = 'p-2 border-b cursor-pointer';
+                historyItem.innerHTML = `
+                    <span>${record.timestamp} ${record.otps.length}条 OTP</span>
+                    <button class="deleteBtn text-red-500 ml-4" data-index="${index}">删除</button>
+                `;
+                historyItem.addEventListener('click', (e) => {
+                    if (!e.target.classList.contains('deleteBtn')) {
+                        document.querySelectorAll('#historyList li').forEach(item => item.classList.remove('bg-yellow-100'));
+                        historyItem.classList.add('bg-yellow-100');
+                        displayOtps(record.otps);
+                    }
+                });
+                historyList.appendChild(historyItem);
+            });
+
+            document.querySelectorAll('.deleteBtn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const index = btn.getAttribute('data-index');
+                    await fetch('/delete_history_item', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ index: parseInt(index, 10) })
+                    });
+                    loadHistory();
+                });
+            });
+        }
+
+        // 清空历史记录
+        document.getElementById('clearHistoryBtn').addEventListener('click', async () => {
+            await fetch('/clear_history', { method: 'POST' });
+            loadHistory();
+        });
+
+        // 页面加载时获取历史记录
+        window.onload = loadHistory;
+    </script>
+</body>
+</html>
