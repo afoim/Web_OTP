@@ -7,7 +7,7 @@ WORKDIR /app
 # 将当前目录内容复制到容器的 /app 目录
 COPY . /app
 
-RUN pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+#RUN pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 
 # 安装应用程序的依赖项
 RUN pip install --no-cache-dir -r requirements.txt
